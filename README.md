@@ -36,6 +36,8 @@ Start the app:
 
 Open http://localhost:3000 in your browser.
 https://quiz-maker-omega.vercel.app/
+
+
 **📸 Screenshots**
 <img width="1920" height="1080" alt="Screenshot (19)" src="https://github.com/user-attachments/assets/7e976c6c-aed8-417d-8125-13700062dab8" />
 <img width="1920" height="1080" alt="Screenshot (18)" src="https://github.com/user-attachments/assets/1fdc3ca0-a5ff-40b4-b53a-59cb435dc6ae" />
