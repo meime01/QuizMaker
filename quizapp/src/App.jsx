@@ -37,13 +37,16 @@ const getInitialTheme = () => {
   try {
     const storedTheme = localStorage.getItem(THEME_KEY);
     if (storedTheme) return storedTheme;
-    return window.matchMedia && window.matchMedia('(prefers-color-scheme: light)').matches
-      ? 'light'
-      : 'dark';
+    // Check system preference
+    if (window.matchMedia && window.matchMedia('(prefers-color-scheme: dark)').matches) {
+      return 'dark';
+    }
+    return 'light';
   } catch {
     return 'light';
   }
 };
+
 
 const styles = `@import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;600;700;800&display=swap');
     
@@ -1329,6 +1332,7 @@ const MyQuizzesView = ({ setGameState, nickname, quizzes, setEditingQuiz }) => {
 const QuizCreator = ({ setGameState, nickname, editingQuiz, setEditingQuiz }) => {
     const { db, userId } = useFirebase();
     const isEditing = !!editingQuiz;
+    const [showShareTooltip, setShowShareTooltip] = useState(false);
 
     const [quizTitle, setQuizTitle] = useState(editingQuiz?.title || '');
     const [timeLimitMinutes, setTimeLimitMinutes] = useState(editingQuiz?.timeLimitMinutes || 5);
@@ -1561,8 +1565,30 @@ const QuizCreator = ({ setGameState, nickname, editingQuiz, setEditingQuiz }) =>
                                         placeholder={`Option ${optIndex + 1}`}
                                         value={opt.text}
                                         onChange={(e) => updateOption(q.id, optIndex, 'text', e.target.value)}
-                                        style={{ marginBottom: 0 }}
+                                        style={{ marginBottom: 0, flexGrow: 1 }}
                                     />
+                                    {q.options.length > 2 && (
+                                        <button
+                                            className="btn btn-danger"
+                                            onClick={() => {
+                                                setQuestions(prev => prev.map(currentQ => {
+                                                    if (currentQ.id === q.id) {
+                                                        const newOptions = [...currentQ.options];
+                                                        newOptions.splice(optIndex, 1);
+                                                        // If we're removing the correct option, make the first option correct
+                                                        if (opt.isCorrect && newOptions.length > 0) {
+                                                            newOptions[0].isCorrect = true;
+                                                        }
+                                                        return { ...currentQ, options: newOptions };
+                                                    }
+                                                    return currentQ;
+                                                }));
+                                            }}
+                                            style={{ padding: '4px 8px', fontSize: '0.8rem' }}
+                                        >
+                                            ✕
+                                        </button>
+                                    )}
                                 </div>
                             ))}
                             {q.options.length < 5 && (
@@ -1599,21 +1625,64 @@ const QuizCreator = ({ setGameState, nickname, editingQuiz, setEditingQuiz }) =>
                 </select>
             </div>
 
-            <div className="btn-row" style={{ marginTop: '1.5rem', justifyContent: 'space-between' }}>
-                <button
-                    className="btn btn-secondary"
-                    onClick={() => { setEditingQuiz(null); setGameState('dashboard'); }}
-                    disabled={isSaving}
-                >
-                    Cancel
-                </button>
-                <button
-                    className="btn btn-primary"
-                    onClick={handleSubmit}
-                    disabled={isSaving}
-                >
-                    {isSaving ? 'Saving...' : (isEditing ? 'Save Changes' : 'Publish Quiz')}
-                </button>
+            <div style={{ position: 'relative' }}>
+                {isEditing && quizCode && (
+                    <div style={{ marginBottom: '1rem', textAlign: 'center' }}>
+                        <button
+                            className="btn btn-secondary"
+                            onClick={() => {
+                                const shareUrl = `${window.location.origin}?quiz=${quizCode}`;
+                                if (navigator.share) {
+                                    navigator.share({
+                                        title: quizTitle || 'Quiz',
+                                        text: `Join my quiz: ${quizTitle}`,
+                                        url: shareUrl
+                                    }).catch(console.error);
+                                } else {
+                                    navigator.clipboard.writeText(shareUrl).then(() => {
+                                        setShowShareTooltip(true);
+                                        setTimeout(() => setShowShareTooltip(false), 2000);
+                                    });
+                                }
+                            }}
+                            style={{ width: 'auto', margin: '0 auto' }}
+                        >
+                            🔗 Share Quiz
+                        </button>
+                        {showShareTooltip && (
+                            <div style={{
+                                position: 'absolute',
+                                top: '100%',
+                                left: '50%',
+                                transform: 'translateX(-50%)',
+                                backgroundColor: 'var(--color-bg-card)',
+                                padding: '0.5rem 1rem',
+                                borderRadius: '4px',
+                                boxShadow: '0 2px 4px var(--color-shadow)',
+                                zIndex: 100,
+                                marginTop: '0.5rem'
+                            }}>
+                                Quiz link copied!
+                            </div>
+                        )}
+                    </div>
+                )}
+                <div className="btn-row" style={{ marginTop: '1.5rem', justifyContent: 'space-between' }}>
+                    <button
+                        className="btn btn-secondary"
+                        onClick={() => { setEditingQuiz(null); setGameState('dashboard'); }}
+                        disabled={isSaving}
+                    >
+                        Cancel
+                    </button>
+                    <button
+                        className="btn btn-primary"
+                        onClick={handleSubmit}
+                        disabled={isSaving}
+                    >
+                        {isSaving ? 'Saving...' : (isEditing ? 'Save Changes' : 'Publish Quiz')}
+                    </button>
+                </div>
             </div>
         </div>
     );
@@ -1634,7 +1703,7 @@ const App = () => {
     const { auth, db, userId, isAuthenticated, authError } = useFirebaseAuth();
     const { quizzes, isLoading } = useQuizData(db, isAuthenticated);
 
-    const isDarkMode = theme === 'light';
+    const isDarkMode = theme === 'dark';
 
     // Check for existing nickname on component mount - SIMPLIFIED
    useEffect(() => {
@@ -1649,16 +1718,49 @@ const App = () => {
 
     // Handle game state transitions - SIMPLIFIED
     useEffect(() => {
-        // If we have a nickname and we're authenticated OR if Firebase fails, allow dashboard access
+        // Handle shared quiz URL
+        const params = new URLSearchParams(window.location.search);
+        const sharedQuizCode = params.get('quiz');
+        
+        // If we have a nickname and either a shared quiz code or we're in login state
         const hasNickname = nickname && nickname.trim();
         
-        if (hasNickname && gameState === 'login') {
-            // Allow access to dashboard if we have a nickname, regardless of Firebase auth status
-            setGameState('dashboard');
+        if (hasNickname) {
+            if (sharedQuizCode) {
+                // Set the quiz code and navigate to join quiz
+                setQuizToJoin(sharedQuizCode);
+                setGameState('join_quiz');
+                // Clear the URL parameter
+                window.history.replaceState({}, '', window.location.pathname);
+            } else if (gameState === 'login') {
+                // Normal flow - go to dashboard
+                setGameState('dashboard');
+            }
         }
     }, [nickname, gameState, isAuthenticated]);
 
     // Persist nickname when it changes
+    // Theme effect
+    useEffect(() => {
+        const mediaQuery = window.matchMedia('(prefers-color-scheme: dark)');
+        
+        const handleThemeChange = () => {
+            const storedTheme = localStorage.getItem(THEME_KEY);
+            if (!storedTheme) {
+                // Only update if user hasn't manually set a theme
+                setTheme(mediaQuery.matches ? 'dark' : 'light');
+            }
+        };
+
+        // Set up listener for system theme changes
+        mediaQuery.addEventListener('change', handleThemeChange);
+
+        // Initial check
+        handleThemeChange();
+
+        return () => mediaQuery.removeEventListener('change', handleThemeChange);
+    }, []);
+
     useEffect(() => {
         if (nickname && nickname.trim()) {
             localStorage.setItem('quizmaker_nickname', nickname.trim());
@@ -1666,8 +1768,10 @@ const App = () => {
     }, [nickname]);
 
     const toggleTheme = useCallback(() => {
-        setTheme(current => (current === 'dark' ? 'light' : 'dark'));
-    }, []);
+        const newTheme = theme === 'dark' ? 'light' : 'dark';
+        setTheme(newTheme);
+        localStorage.setItem(THEME_KEY, newTheme); // Save manual theme choice
+    }, [theme]);
 
     const handleRetryAuth = () => {
         setRetryCount(prev => prev + 1);
